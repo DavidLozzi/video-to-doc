@@ -64,12 +64,16 @@ def extract_unique_frames(uploaded_file):
         ) * 100  # Calculate percentage of frames processed
         progress_bar.progress(int(percentage_done))  # Update progress bar
 
-        for i in range(2):
-            ret, frame = cap.read()
-            frame_index += 1
+        ret, frame = cap.read()
+        frame_index += 1
 
         if not ret:
             break
+
+        if frame_index % 5 != 0:
+            continue
+
+        frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
 
         if is_frame_unique_ssim(frame, previous_frame, frame_index):
             print(f"Frame {frame_index} is unique!")
