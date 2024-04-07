@@ -57,6 +57,9 @@ def extract_unique_frames(uploaded_file):
     progress_bar = st.progress(0)
     status = st.empty()
 
+    cols = [st.columns(3) for _ in range(total_frames // 3)]
+    col_index = 0
+    row_index = 0
     while True:
         print(f"Processing frame {frame_index}...")
         percentage_done = (
@@ -87,6 +90,12 @@ def extract_unique_frames(uploaded_file):
                 cv2.imwrite(frame_path, frame)
                 images.append(frame_path)
                 status.text(f"Found frame {frame_index}")
+
+                cols[row_index][col_index].image(frame_path, width=300)
+                col_index += 1
+                if col_index == 3:
+                    col_index = 0
+                    row_index += 1
 
         previous_frame = frame.copy()
 
@@ -126,18 +135,19 @@ def create_doc_with_images(image_paths):
 def process_file(uploaded_file):
     """Simulate file processing with progress."""
 
+    placeholder_download = st.empty()
+    placeholder_status = st.empty()
     images = extract_unique_frames(uploaded_file)
     print(images)
-    st.text(f"Found {len(images)} frames")
+    placeholder_status.text(f"Found {len(images)} frames")
     st.text("Creating Word Doc")
-
     create_doc_with_images(images)
 
     st.success("Processing complete!")
     with open("./output/output.docx", "rb") as f:
         data = f.read()
 
-    st.download_button(
+    placeholder_download.download_button(
         label="Download Word Doc",
         data=data,
         file_name="output.docx",
