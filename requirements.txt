@@ -1,5 +1,9 @@
-streamlit
+beautifulsoup4
+httpx
+numpy
 opencv-python-headless
+Pillow
+playwright
 python-docx
 scikit-image
-numpy
+streamlit
