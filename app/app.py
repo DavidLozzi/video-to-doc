@@ -11,6 +11,57 @@ import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 import time
+import shutil
+import glob
+
+# Clean up any existing outputs, cache, and temporary files
+def cleanup_outputs():
+    """Clean up any existing outputs, cache, and temporary files"""
+    print("Cleaning up outputs and temporary files...")
+    
+    # Clean up output directory
+    if os.path.exists("output"):
+        for file in os.listdir("output"):
+            file_path = os.path.join("output", file)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+                    print(f"Deleted file: {file_path}")
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+                    print(f"Deleted directory: {file_path}")
+            except Exception as e:
+                print(f"Failed to delete {file_path}: {e}")
+    
+    # Clean up any temporary directories that might have been left behind
+    temp_patterns = [
+        "frames_all_*",
+        "frames_unique_*", 
+        "comic_images_*",
+        "web_images_*"
+    ]
+    
+    for pattern in temp_patterns:
+        temp_dirs = glob.glob(os.path.join(tempfile.gettempdir(), pattern))
+        for temp_dir in temp_dirs:
+            try:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    print(f"Deleted temp directory: {temp_dir}")
+            except Exception as e:
+                print(f"Failed to delete temp directory {temp_dir}: {e}")
+    
+    # Clean up any temporary files
+    temp_files = glob.glob(os.path.join(tempfile.gettempdir(), "tmp*"))
+    for temp_file in temp_files:
+        try:
+            if os.path.isfile(temp_file):
+                os.unlink(temp_file)
+                print(f"Deleted temp file: {temp_file}")
+        except Exception as e:
+            print(f"Failed to delete temp file {temp_file}: {e}")
+    
+    print("Cleanup complete")
 
 os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "8192"
 if not os.path.exists("output"):
@@ -943,7 +994,7 @@ def fetch_comic_chapter_images(chapter_id, url):
             return []
 
 def download_comic_image(url, output_path):
-    """Download a single comic image and convert to JPEG"""
+    """Download a single comic image, resize it, and convert to JPEG"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
     }
@@ -963,9 +1014,27 @@ def download_comic_image(url, output_path):
             if image.mode in ('RGBA', 'LA', 'P'):
                 image = image.convert('RGB')
             
-            # Save as JPEG
+            # Resize image to reduce file size
+            # Calculate new dimensions while maintaining aspect ratio
+            max_width = 600
+            max_height = 1000
+            
+            # Get original dimensions
+            width, height = image.size
+            
+            # Calculate scaling factor
+            scale_factor = min(max_width / width, max_height / height)
+            
+            # Only resize if the image is larger than our target size
+            if scale_factor < 1:
+                new_width = int(width * scale_factor)
+                new_height = int(height * scale_factor)
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                print(f"Resized image from {width}x{height} to {new_width}x{new_height}")
+            
+            # Save as JPEG with reduced quality for smaller file size
             jpeg_path = output_path + '.jpg'
-            image.save(jpeg_path, 'JPEG', quality=95)
+            image.save(jpeg_path, 'JPEG', quality=85, optimize=True)
             
             return jpeg_path
             
@@ -1076,23 +1145,29 @@ with tab1:
     
     comic_url = st.text_input("Enter comic series URL", placeholder="https://freecomic.to/comic/star-wars-legacy-of-vader-2025.164413")
     
-    # Auto-extract chapters when URL is entered and user hits enter
+    # Add button to extract chapters when URL is entered
     if comic_url:
-        # Check if URL has changed or chapters haven't been extracted yet
-        if ("comic_chapters" not in st.session_state or 
-            st.session_state.comic_url != comic_url or 
-            not st.session_state.comic_chapters):
-            
-            with st.spinner("Extracting comic chapters..."):
-                chapter_ids = extract_comic_chapters(comic_url)
-                st.session_state.comic_chapters = chapter_ids
-                st.session_state.comic_url = comic_url
-                st.session_state.comic_processed = False
-            
-            if not chapter_ids:
-                st.warning("No comic chapters found. Please check the URL.")
-            else:
-                st.success(f"Found {len(chapter_ids)} comic chapters!")
+        # Check if URL has changed
+        if ("comic_url" not in st.session_state or st.session_state.comic_url != comic_url):
+            st.session_state.comic_url = comic_url
+            st.session_state.comic_chapters = None
+            st.session_state.selected_comic_chapter = None
+            st.session_state.comic_processed = False
+        
+        # Show extract chapters button if chapters haven't been extracted yet
+        if "comic_chapters" not in st.session_state or st.session_state.comic_chapters is None:
+            if st.button("Extract Comic Chapters"):
+                # Clean up outputs when starting a new URL download
+                cleanup_outputs()
+                
+                with st.spinner("Extracting comic chapters..."):
+                    chapter_ids = extract_comic_chapters(comic_url)
+                    st.session_state.comic_chapters = chapter_ids
+                
+                if not chapter_ids:
+                    st.warning("No comic chapters found. Please check the URL.")
+                else:
+                    st.success(f"Found {len(chapter_ids)} comic chapters!")
         
         # Display comic chapters if available
         if "comic_chapters" in st.session_state and st.session_state.comic_chapters:
@@ -1106,38 +1181,39 @@ with tab1:
         if "selected_comic_chapter" in st.session_state:
             st.write(f"**Selected Comic Chapter:** {st.session_state.selected_comic_chapter}")
             
-            # Auto-start processing when chapter is selected
+            # Add button to start processing
             if "comic_processed" not in st.session_state or not st.session_state.comic_processed:
-                with st.spinner("Fetching chapter images..."):
-                    image_urls = fetch_comic_chapter_images(st.session_state.selected_comic_chapter, comic_url)
-                    
-                    if image_urls:
-                        st.success(f"Found {len(image_urls)} images for chapter {st.session_state.selected_comic_chapter}")
+                if st.button("Process Selected Chapter"):
+                    with st.spinner("Fetching chapter images..."):
+                        image_urls = fetch_comic_chapter_images(st.session_state.selected_comic_chapter, comic_url)
                         
-                        with st.spinner("Processing images..."):
-                            chapter_title = f"Chapter_{st.session_state.selected_comic_chapter}"
-                            output_images = process_comic_chapter(st.session_state.selected_comic_chapter, chapter_title, image_urls)
+                        if image_urls:
+                            st.success(f"Found {len(image_urls)} images for chapter {st.session_state.selected_comic_chapter}")
                             
-                            if output_images:
-                                st.text("Creating Word Doc")
-                                create_doc_with_images(output_images)
+                            with st.spinner("Processing images..."):
+                                chapter_title = f"Chapter_{st.session_state.selected_comic_chapter}"
+                                output_images = process_comic_chapter(st.session_state.selected_comic_chapter, chapter_title, image_urls)
                                 
-                                st.success("Processing complete!")
-                                with open("./output/output.docx", "rb") as f:
-                                    data = f.read()
-                                
-                                st.download_button(
-                                    label="Download Word Document",
-                                    data=data,
-                                    file_name=f"chapter_{st.session_state.selected_comic_chapter}.docx",
-                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                )
-                            else:
-                                st.error("Failed to process images.")
-                    else:
-                        st.error("No images found for this chapter.")
-                
-                st.session_state.comic_processed = True
+                                if output_images:
+                                    st.text("Creating Word Doc")
+                                    create_doc_with_images(output_images)
+                                    
+                                    st.success("Processing complete!")
+                                    with open("./output/output.docx", "rb") as f:
+                                        data = f.read()
+                                    
+                                    st.download_button(
+                                        label="Download Word Document",
+                                        data=data,
+                                        file_name=f"chapter_{st.session_state.selected_comic_chapter}.docx",
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    )
+                                else:
+                                    st.error("Failed to process images.")
+                        else:
+                            st.error("No images found for this chapter.")
+                    
+                    st.session_state.comic_processed = True
 
 with tab2:
     uploaded_file = st.file_uploader("Choose a video", type=['mp4', 'avi', 'mov', 'mkv'])
